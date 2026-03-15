@@ -159,7 +159,26 @@ footer p{font-size:0.75rem;color:var(--muted-fg)}
 </head>
 <body>
 <div id="root"></div>
-<script src="https://fastly.jsdelivr.net/npm/barcode-detector@3/dist/iife/polyfill.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/index.js"></script>
+<script>
+// Pre-check available barcode detection engines
+window.__scanEngine = 'none';
+window.__nativeBD = false;
+window.__zbarReady = false;
+try {
+  if ('BarcodeDetector' in window) {
+    window.__nativeBD = true;
+    window.__scanEngine = 'native';
+  }
+} catch(e) {}
+try {
+  if (typeof zbarWasm !== 'undefined' && zbarWasm.scanImageData) {
+    window.__zbarReady = true;
+    if (window.__scanEngine === 'none') window.__scanEngine = 'zbar';
+  }
+} catch(e) {}
+console.log('[Scanner] Engine:', window.__scanEngine, 'Native:', window.__nativeBD, 'ZBar:', window.__zbarReady);
+</script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -259,16 +278,17 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
   const streamRef = useRef(null);
   const loopRef = useRef(null);
   const detectorRef = useRef(null);
+  const engineRef = useRef(null);
   const [state, setState] = useState("idle");
   const [nutrition, setNutrition] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
   const [manualCode, setManualCode] = useState("");
   const [hasCamera, setHasCamera] = useState(true);
-  const [hasBarcodeAPI, setHasBarcodeAPI] = useState(true);
+  const [debugInfo, setDebugInfo] = useState("");
 
   const stopCamera = useCallback(() => {
-    if (loopRef.current) { cancelAnimationFrame(loopRef.current); loopRef.current = null; }
+    if (loopRef.current) { clearTimeout(loopRef.current); loopRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setCameraReady(false);
   }, []);
@@ -283,42 +303,136 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
   const startScanning = useCallback(async () => {
     setState("scanning");
     setCameraReady(false);
+    setDebugInfo("Initializing...");
     try {
-      // Use BarcodeDetector (native or polyfilled by barcode-detector IIFE)
-      if (!detectorRef.current) {
-        if (typeof window.BarcodeDetector !== "undefined") {
-          detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39"] });
-        } else {
-          // Polyfill didn't load (offline?) — fall back to manual entry
-          setHasBarcodeAPI(false);
-          setState("manual");
-          return;
+      // Determine best scan engine
+      let engine = "none";
+      // Try native BarcodeDetector first (Android Chrome supports this)
+      if (typeof window.BarcodeDetector !== "undefined") {
+        try {
+          const formats = await window.BarcodeDetector.getSupportedFormats();
+          if (formats && formats.length > 0) {
+            detectorRef.current = new window.BarcodeDetector({
+              formats: formats.filter(f => ["ean_13","ean_8","upc_a","upc_e","code_128","code_39"].includes(f))
+            });
+            engine = "native";
+            setDebugInfo("Using native BarcodeDetector");
+          }
+        } catch(e) {
+          setDebugInfo("Native BarcodeDetector failed: " + e.message);
         }
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } });
+      // Fall back to zbar-wasm
+      if (engine === "none" && typeof zbarWasm !== "undefined" && zbarWasm.scanImageData) {
+        engine = "zbar";
+        setDebugInfo("Using ZBar WASM engine");
+      }
+      if (engine === "none") {
+        setDebugInfo("No scan engine available");
+        setState("manual");
+        return;
+      }
+      engineRef.current = engine;
+
+      // Start camera
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        setDebugInfo(engine + ": Camera opened (rear)");
+      } catch (camErr) {
+        setDebugInfo("Rear cam failed (" + camErr.name + "), trying any...");
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          setDebugInfo(engine + ": Camera opened (fallback)");
+        } catch (camErr2) {
+          throw camErr2;
+        }
+      }
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        // Wait for video to be ready
+        await new Promise((resolve, reject) => {
+          video.onloadedmetadata = () => {
+            video.play().then(resolve).catch(reject);
+          };
+          setTimeout(() => reject(new Error("Video load timeout")), 5000);
+        });
+      }
       setCameraReady(true);
 
+      // Create offscreen canvas
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      let frameCount = 0;
+
       const detect = async () => {
-        if (!videoRef.current || !detectorRef.current || !streamRef.current) return;
+        if (!videoRef.current || !streamRef.current) return;
+        const vw = videoRef.current.videoWidth;
+        const vh = videoRef.current.videoHeight;
+        if (!vw || !vh) {
+          loopRef.current = setTimeout(detect, 300);
+          return;
+        }
         try {
-          const barcodes = await detectorRef.current.detect(videoRef.current);
-          if (barcodes.length > 0) {
+          canvas.width = vw;
+          canvas.height = vh;
+          ctx.drawImage(videoRef.current, 0, 0, vw, vh);
+          frameCount++;
+
+          let foundCode = null;
+
+          if (engineRef.current === "native" && detectorRef.current) {
+            // Native BarcodeDetector — pass canvas directly
+            const barcodes = await detectorRef.current.detect(canvas);
+            if (barcodes.length > 0) {
+              foundCode = barcodes[0].rawValue;
+            }
+          } else {
+            // zbar-wasm — use scanImageData
+            const imageData = ctx.getImageData(0, 0, vw, vh);
+            const symbols = await zbarWasm.scanImageData(imageData);
+            if (symbols.length > 0) {
+              foundCode = symbols[0].decode("utf-8");
+            }
+          }
+
+          if (frameCount % 10 === 0) {
+            setDebugInfo(`${engineRef.current} | ${vw}x${vh} | Frame ${frameCount}`);
+          }
+
+          if (foundCode) {
+            setDebugInfo("Found: " + foundCode);
             stopCamera();
-            doLookup(barcodes[0].rawValue);
+            doLookup(foundCode);
             return;
           }
-        } catch {}
-        loopRef.current = requestAnimationFrame(detect);
+        } catch (e) {
+          if (frameCount % 20 === 0) {
+            setDebugInfo("Err@" + frameCount + ": " + e.message);
+          }
+          // If native fails repeatedly, switch to zbar
+          if (engineRef.current === "native" && frameCount > 30 && typeof zbarWasm !== "undefined") {
+            engineRef.current = "zbar";
+            setDebugInfo("Switched to ZBar engine");
+          }
+        }
+        loopRef.current = setTimeout(detect, 150);
       };
-      setTimeout(() => { loopRef.current = requestAnimationFrame(detect); }, 500);
+
+      // Small delay for video to produce frames
+      loopRef.current = setTimeout(detect, 500);
     } catch (err) {
-      if (err?.name === "NotAllowedError" || err?.name === "NotFoundError") {
+      if (err?.name === "NotAllowedError" || err?.name === "NotFoundError" || err?.name === "NotReadableError" || err?.name === "OverconstrainedError") {
         setHasCamera(false);
+        setDebugInfo("Camera error: " + err.name);
         setState("manual");
       } else {
         setErrorMsg(err?.message || "Could not start camera");
+        setDebugInfo("Error: " + err?.message);
         setState("error");
       }
     }
@@ -327,7 +441,7 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
   useEffect(() => {
     if (open) {
       setState("idle"); setNutrition(null); setErrorMsg(""); setManualCode("");
-      setCameraReady(false);
+      setCameraReady(false); setDebugInfo("");
       startScanning();
     } else { stopCamera(); }
     return stopCamera;
@@ -357,17 +471,19 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
         {state === "scanning" && (
           <div>
             <div className="camera-wrap">
-              <video ref={videoRef} playsInline muted />
+              <video ref={videoRef} autoPlay playsInline muted />
               {cameraReady && <div className="scan-overlay"><div className="scan-box"></div></div>}
               {!cameraReady && <div className="camera-loading"><CameraIcon /></div>}
             </div>
-            <p style={{fontSize:'0.75rem',color:'var(--muted-fg)',textAlign:'center',marginTop:'0.5rem'}}>Data sourced from Open Food Facts (per 100g)</p>
+            {debugInfo && <p style={{fontSize:'0.625rem',color:'var(--muted-fg)',textAlign:'center',marginTop:'0.375rem',fontFamily:'monospace',opacity:0.7}}>{debugInfo}</p>}
+            <p style={{fontSize:'0.75rem',color:'var(--muted-fg)',textAlign:'center',marginTop:'0.375rem'}}>Hold barcode steady in the frame</p>
             <button className="btn-outline" style={{width:'100%',marginTop:'0.5rem'}} onClick={() => { stopCamera(); setState("manual"); }}>Type barcode manually</button>
           </div>
         )}
 
         {state === "manual" && (
           <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+            {debugInfo && <p style={{fontSize:'0.625rem',color:'var(--muted-fg)',fontFamily:'monospace',opacity:0.7}}>{debugInfo}</p>}
             <div className="input-group">
               <label className="input-label" htmlFor="manual-barcode">Barcode Number</label>
               <div className="input-wrap">
@@ -426,6 +542,7 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
                 <p className="err-msg">{errorMsg}</p>
               </div>
             </div>
+            {debugInfo && <p style={{fontSize:'0.625rem',color:'var(--muted-fg)',fontFamily:'monospace',opacity:0.7}}>{debugInfo}</p>}
             <button className="btn-primary" onClick={handleRetry}>Try Again</button>
             <button className="btn-outline" onClick={() => { setErrorMsg(""); setState("manual"); }}>Enter barcode manually</button>
           </div>
