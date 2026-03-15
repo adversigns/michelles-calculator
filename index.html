@@ -159,6 +159,7 @@ footer p{font-size:0.75rem;color:var(--muted-fg)}
 </head>
 <body>
 <div id="root"></div>
+<script src="https://fastly.jsdelivr.net/npm/barcode-detector@3/dist/iife/polyfill.min.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -283,12 +284,12 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
     setState("scanning");
     setCameraReady(false);
     try {
-      // Check if native BarcodeDetector exists
+      // Use BarcodeDetector (native or polyfilled by barcode-detector IIFE)
       if (!detectorRef.current) {
-        if (typeof globalThis.BarcodeDetector !== "undefined") {
-          detectorRef.current = new globalThis.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39"] });
+        if (typeof window.BarcodeDetector !== "undefined") {
+          detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39"] });
         } else {
-          // No native API — fall back to manual entry
+          // Polyfill didn't load (offline?) — fall back to manual entry
           setHasBarcodeAPI(false);
           setState("manual");
           return;
