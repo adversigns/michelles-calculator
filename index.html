@@ -241,6 +241,7 @@ async function lookupBarcode(barcode) {
       sugar: Math.round((n["sugars_100g"] ?? n["sugars"] ?? 0) * 10) / 10,
       protein: Math.round((n["proteins_100g"] ?? n["proteins"] ?? 0) * 10) / 10,
       fiber: Math.round((n["fiber_100g"] ?? n["fiber"] ?? 0) * 10) / 10,
+      carbohydrates: Math.round((n["carbohydrates_100g"] ?? n["carbohydrates"] ?? 0) * 10) / 10,
       unsaturatedFat: Math.round(unsatFat * 10) / 10,
       servingSize: data.product.serving_size || "per 100g",
     };
@@ -519,12 +520,10 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
               </div>
             </div>
             <div className="nutrition-grid">
-              <div className="nutrition-item"><p className="label">Calories</p><p className="value">{nutrition.calories} kcal</p></div>
               <div className="nutrition-item"><p className="label">Protein</p><p className="value">{nutrition.protein}g</p></div>
-              <div className="nutrition-item"><p className="label">Total Fat</p><p className="value">{nutrition.fat}g</p></div>
-              <div className="nutrition-item"><p className="label">Saturated Fat</p><p className="value">{nutrition.saturatedFat}g</p></div>
-              <div className="nutrition-item"><p className="label">Sugar</p><p className="value">{nutrition.sugar}g</p></div>
-              <div className="nutrition-item"><p className="label">Fiber</p><p className="value">{nutrition.fiber}g</p></div>
+              <div className="nutrition-item"><p className="label">Carbohydrates</p><p className="value">{nutrition.carbohydrates}g</p></div>
+              <div className="nutrition-item"><p className="label">Fat</p><p className="value">{nutrition.fat}g</p></div>
+              <div className="nutrition-item"><p className="label">Fibre</p><p className="value">{nutrition.fiber}g</p></div>
             </div>
             <div className="btn-row">
               <button className="btn-primary" onClick={() => { onNutritionFound(nutrition); onClose(); }}>Use These Values</button>
