@@ -213,14 +213,18 @@ function calcSmart(cal, sf, sug, prot) {
   const p = isNaN(parseFloat(prot)) ? 0 : parseFloat(prot);
   return Math.max(0, Math.round(c * 0.0305 + s * 0.275 + su * 0.12 - p * 0.098));
 }
-function calcPersonal(cal, sf, sug, prot, fib, uf) {
-  const c = parseFloat(cal); if (isNaN(c)) return null;
-  const s = isNaN(parseFloat(sf)) ? 0 : parseFloat(sf);
-  const su = isNaN(parseFloat(sug)) ? 0 : parseFloat(sug);
-  const p = isNaN(parseFloat(prot)) ? 0 : parseFloat(prot);
-  const fi = isNaN(parseFloat(fib)) ? 0 : parseFloat(fib);
-  const u = isNaN(parseFloat(uf)) ? 0 : parseFloat(uf);
-  return Math.max(0, Math.round(c / 33 + s * 0.25 + su * 0.12 - p * 0.1 - fi * 0.1 - u * 0.05));
+function calcPersonal(prot, carb, fat, fib) {
+  const p = parseFloat(prot);
+  const c = parseFloat(carb);
+  const f = parseFloat(fat);
+  const fi = parseFloat(fib);
+  if ([p, c, f, fi].every(isNaN)) return null;
+  const pv = isNaN(p) ? 0 : p;
+  const cv = isNaN(c) ? 0 : c;
+  const fv = isNaN(f) ? 0 : f;
+  const fiv = isNaN(fi) ? 0 : fi;
+  const cal = pv * 4 + cv * 4 + fv * 9;
+  return Math.max(0, Math.round(cal / 33 + fv * 0.2 - pv * 0.1 - fiv * 0.1));
 }
 
 // --- Open Food Facts lookup ---
@@ -520,10 +524,12 @@ function BarcodeScanner({ open, onClose, onNutritionFound }) {
               </div>
             </div>
             <div className="nutrition-grid">
+              <div className="nutrition-item"><p className="label">Calories</p><p className="value">{nutrition.calories} kcal</p></div>
               <div className="nutrition-item"><p className="label">Protein</p><p className="value">{nutrition.protein}g</p></div>
               <div className="nutrition-item"><p className="label">Carbohydrates</p><p className="value">{nutrition.carbohydrates}g</p></div>
               <div className="nutrition-item"><p className="label">Fat</p><p className="value">{nutrition.fat}g</p></div>
               <div className="nutrition-item"><p className="label">Fibre</p><p className="value">{nutrition.fiber}g</p></div>
+              <div className="nutrition-item"><p className="label">Sugar</p><p className="value">{nutrition.sugar}g</p></div>
             </div>
             <div className="btn-row">
               <button className="btn-primary" onClick={() => { onNutritionFound(nutrition); onClose(); }}>Use These Values</button>
@@ -559,7 +565,7 @@ function App() {
 
   const [classic, setClassic] = useState({ calories: "", fat: "", fiber: "" });
   const [smart, setSmart] = useState({ calories: "", saturatedFat: "", sugar: "", protein: "" });
-  const [personal, setPersonal] = useState({ calories: "", saturatedFat: "", sugar: "", protein: "", fiber: "", unsaturatedFat: "" });
+  const [personal, setPersonal] = useState({ protein: "", carbohydrates: "", fat: "", fiber: "" });
 
   useEffect(() => { document.documentElement.classList.toggle("dark", dark); }, [dark]);
 
@@ -567,18 +573,18 @@ function App() {
     const s = v => v > 0 ? String(v) : "";
     if (system === "classic") setClassic({ calories: s(data.calories), fat: s(data.fat), fiber: s(data.fiber) });
     else if (system === "smartpoints") setSmart({ calories: s(data.calories), saturatedFat: s(data.saturatedFat), sugar: s(data.sugar), protein: s(data.protein) });
-    else setPersonal({ calories: s(data.calories), saturatedFat: s(data.saturatedFat), sugar: s(data.sugar), protein: s(data.protein), fiber: s(data.fiber), unsaturatedFat: s(data.unsaturatedFat) });
+    else setPersonal({ protein: s(data.protein), carbohydrates: s(data.carbohydrates), fat: s(data.fat), fiber: s(data.fiber) });
   }, [system]);
 
   const resetCurrent = () => {
     if (system === "classic") setClassic({ calories: "", fat: "", fiber: "" });
     else if (system === "smartpoints") setSmart({ calories: "", saturatedFat: "", sugar: "", protein: "" });
-    else setPersonal({ calories: "", saturatedFat: "", sugar: "", protein: "", fiber: "", unsaturatedFat: "" });
+    else setPersonal({ protein: "", carbohydrates: "", fat: "", fiber: "" });
   };
 
   const classicPts = calcClassic(classic.calories, classic.fat, classic.fiber);
   const smartPts = calcSmart(smart.calories, smart.saturatedFat, smart.sugar, smart.protein);
-  const personalPts = calcPersonal(personal.calories, personal.saturatedFat, personal.sugar, personal.protein, personal.fiber, personal.unsaturatedFat);
+  const personalPts = calcPersonal(personal.protein, personal.carbohydrates, personal.fat, personal.fiber);
 
   const systems = [
     { key: "classic", label: "Classic", icon: <ScaleIcon />, period: "Pre-2015" },
@@ -663,17 +669,15 @@ function App() {
               <div className="card-header">
                 <div>
                   <div className="card-title"><span className="badge">{systems[2].period}</span> PersonalPoints</div>
-                  <p className="card-desc">Calories, protein, fiber, and fats are all factored in</p>
+                  <p className="card-desc">Protein, carbs, fat, and fibre are all factored in</p>
                 </div>
                 <button className="icon-btn" onClick={resetCurrent}><ResetIcon /></button>
               </div>
               <div className="card-body">
-                <NumberInput id="p-cal" label="Calories" value={personal.calories} onChange={v => setPersonal(p => ({...p, calories: v}))} unit="kcal" />
-                <NumberInput id="p-sf" label="Saturated Fat" value={personal.saturatedFat} onChange={v => setPersonal(p => ({...p, saturatedFat: v}))} />
-                <NumberInput id="p-sug" label="Added Sugar" value={personal.sugar} onChange={v => setPersonal(p => ({...p, sugar: v}))} />
                 <NumberInput id="p-prot" label="Protein" value={personal.protein} onChange={v => setPersonal(p => ({...p, protein: v}))} />
-                <NumberInput id="p-fib" label="Fiber" value={personal.fiber} onChange={v => setPersonal(p => ({...p, fiber: v}))} />
-                <NumberInput id="p-uf" label="Unsaturated Fat" value={personal.unsaturatedFat} onChange={v => setPersonal(p => ({...p, unsaturatedFat: v}))} />
+                <NumberInput id="p-carb" label="Carbohydrates" value={personal.carbohydrates} onChange={v => setPersonal(p => ({...p, carbohydrates: v}))} />
+                <NumberInput id="p-fat" label="Fat" value={personal.fat} onChange={v => setPersonal(p => ({...p, fat: v}))} />
+                <NumberInput id="p-fib" label="Fibre" value={personal.fiber} onChange={v => setPersonal(p => ({...p, fiber: v}))} />
                 <PointDisplay points={personalPts} label="PersonalPoints" />
               </div>
             </div>
