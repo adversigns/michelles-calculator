@@ -209,9 +209,8 @@ function calcClassic(prot, carb, fat, fib) {
   const pv = isNaN(p) ? 0 : p;
   const cv = isNaN(c) ? 0 : c;
   const fv = isNaN(f) ? 0 : f;
-  const fiv = isNaN(fi) ? 0 : Math.min(fi, 4);
-  const cal = pv * 4 + cv * 4 + fv * 9;
-  return Math.max(0, Math.round(cal / 50 + fv / 12 - fiv / 5));
+  const fiv = isNaN(fi) ? 0 : fi;
+  return Math.max(0, Math.round((16 * pv + 19 * cv + 45 * fv - 14 * fiv) / 175));
 }
 function calcSmart(cal, sf, sug, prot) {
   const c = parseFloat(cal); if (isNaN(c)) return null;
@@ -594,7 +593,7 @@ function App() {
   const personalPts = calcPersonal(personal.protein, personal.carbohydrates, personal.fat, personal.fiber);
 
   const systems = [
-    { key: "classic", label: "Classic", icon: <ScaleIcon />, period: "Pre-2015" },
+    { key: "classic", label: "Classic", icon: <ScaleIcon />, period: "2010–2015" },
     { key: "smartpoints", label: "Smart", icon: <ZapIcon />, period: "2015–2021" },
     { key: "personalpoints", label: "Personal", icon: <FlameIcon />, period: "2022+" },
   ];
@@ -637,7 +636,7 @@ function App() {
               <div className="card-header">
                 <div>
                   <div className="card-title"><span className="badge">{systems[0].period}</span> Classic Points</div>
-                  <p className="card-desc">Calories derived from macros, then (Cal / 50) + (Fat / 12) - (Fibre / 5)</p>
+                  <p className="card-desc">(16×Protein + 19×Carbs + 45×Fat - 14×Fibre) / 175</p>
                 </div>
                 <button className="icon-btn" onClick={resetCurrent}><ResetIcon /></button>
               </div>
